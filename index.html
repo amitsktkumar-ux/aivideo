@@ -61,6 +61,8 @@
     <option value="hi-IN">Hindi</option>
     <option value="en-US">English</option>
   </select>
+  <button id="testVoice" type="button" style="background:#262c4d">🔊 Awaaz test karo</button>
+  <small id="vinfo"></small>
 
   <label>Background music (optional, apna mp3 chuno)</label>
   <input type="file" id="music" accept="audio/*">
@@ -102,29 +104,51 @@ function stopAudio() {
   try { speechSynthesis.cancel(); } catch (e) {}
   if (musicEl) musicEl.pause();
 }
+function pickVoice(lang) {
+  const vs = speechSynthesis.getVoices();
+  const p = lang.slice(0, 2).toLowerCase();
+  return vs.find(v => v.lang.replace("_", "-") === lang) ||
+         vs.find(v => v.lang.toLowerCase().startsWith(p));
+}
+function speakText(t, lang) {
+  if (!("speechSynthesis" in window)) {
+    $("vinfo").textContent = "⚠ Is browser me awaaz support nahi hai";
+    return;
+  }
+  const u = new SpeechSynthesisUtterance(t);
+  u.lang = lang;
+  u.volume = 1;
+  const v = pickVoice(lang);
+  if (v) { u.voice = v; $("vinfo").textContent = ""; }
+  else {
+    $("vinfo").textContent = "⚠ Is phone me " + (lang === "hi-IN" ? "Hindi" : "English") +
+      " voice nahi mili. Phone Settings → Text-to-speech output → Google → Hindi voice data install karo.";
+  }
+  speechSynthesis.cancel();
+  setTimeout(() => speechSynthesis.speak(u), 150);
+}
 function speak() {
   const t = $("narration").value.trim();
-  if (!t) return;
-  try {
-    const u = new SpeechSynthesisUtterance(t);
-    u.lang = $("lang").value;
-    speechSynthesis.cancel();
-    speechSynthesis.speak(u);
-  } catch (e) {}
+  if (t) speakText(t, $("lang").value);
 }
+try { speechSynthesis.getVoices(); } catch (e) {}
+$("testVoice").onclick = () =>
+  speakText($("narration").value.trim() || "Hello, this is a test", $("lang").value);
+
 vid.addEventListener("play", () => {
   speak();
   const f = $("music").files[0];
   if (f) {
     if (!musicEl) { musicEl = new Audio(); musicEl.loop = true; musicEl.volume = 0.3; }
-    if (!musicEl.dataset.n || musicEl.dataset.n !== f.name) {
+    if (musicEl.dataset.n !== f.name) {
       musicEl.src = URL.createObjectURL(f); musicEl.dataset.n = f.name;
     }
     musicEl.currentTime = 0; musicEl.play().catch(() => {});
   }
 });
-vid.addEventListener("pause", stopAudio);
-vid.addEventListener("ended", stopAudio);
+// user ne khud pause kiya to awaaz band; video khatam hone par awaaz poori bolne do
+vid.addEventListener("pause", () => { if (!vid.ended) stopAudio(); });
+vid.addEventListener("ended", () => { if (musicEl) musicEl.pause(); });
 
 // ---- video generate ----
 $("go").onclick = async () => {

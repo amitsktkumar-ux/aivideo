@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1220">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<title>AI Video Maker</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,sans-serif;background:#0f1220;color:#eef;padding:16px;
+       padding-top:max(16px,env(safe-area-inset-top));padding-bottom:max(16px,env(safe-area-inset-bottom))}
+  h1{font-size:22px;margin:0 0 12px}
+  .card{background:#1a1f36;border-radius:14px;padding:14px;margin-bottom:14px}
+  label{display:block;font-size:13px;color:#aab;margin:10px 0 4px}
+  input,textarea,select,button{width:100%;padding:12px;border-radius:10px;border:1px solid #333a5c;
+    background:#0f1220;color:#fff;font-size:15px}
+  textarea{min-height:80px}
+  button{background:#6c5ce7;border:0;font-weight:600;margin-top:12px}
+  button:disabled{opacity:.5}
+  .tabs{display:flex;gap:8px;margin-bottom:12px}
+  .tabs button{margin:0;background:#262c4d}
+  .tabs button.on{background:#6c5ce7}
+  .row{display:flex;align-items:center;gap:8px;margin-top:10px}
+  .row input{width:auto}
+  #status{margin-top:10px;font-size:14px;color:#8fd;white-space:pre-wrap}
+  video{width:100%;border-radius:12px;margin-top:12px}
+  .hide{display:none}
+  small{color:#99a}
+  a{color:#8fd}
+</style>
+</head>
+<body>
+<h1>🎬 AI Video Maker</h1>
+
+<div class="tabs">
+  <button id="tabT" class="on">Prompt → Video</button>
+  <button id="tabI">Image → Video</button>
+</div>
+
+<div class="card">
+  <div id="boxT">
+    <label>Video prompt (English me likho)</label>
+    <textarea id="prompt" placeholder="A lion walking at sunset, cinematic, slow tracking shot"></textarea>
+  </div>
+  <div id="boxI" class="hide">
+    <label>Image chuno</label>
+    <input type="file" id="image" accept="image/*">
+    <label>Harkat likho (English)</label>
+    <textarea id="prompt2" placeholder="The camera slowly zooms in, wind moves her hair, cinematic"></textarea>
+  </div>
+
+  <label>Video kitne second (2-5)</label>
+  <select id="secs"><option>2</option><option>3</option><option>4</option><option>5</option></select>
+
+  <label>Voice-over text (optional)</label>
+  <textarea id="narration" placeholder="शेर जंगल का राजा है"></textarea>
+  <label>Voice bhasha</label>
+  <select id="lang">
+    <option value="hi-IN">Hindi</option>
+    <option value="en-US">English</option>
+  </select>
+
+  <label>Background music (optional, apna mp3 chuno)</label>
+  <input type="file" id="music" accept="audio/*">
+
+  <button id="go">Generate Video</button>
+  <div id="status"></div>
+  <video id="out" controls playsinline class="hide"></video>
+  <a id="dl" class="hide" download="ai_video.mp4">⬇ Video download karo</a>
+</div>
+
+<div class="card">
+  <label>Hugging Face token (optional, free quota behtar milti hai)</label>
+  <input id="token" type="password" placeholder="hf_xxxxxxxx">
+  <small>huggingface.co/settings/tokens se free "Read" token banao.</small>
+</div>
+
+<script type="module">
+import { Client, handle_file } from "https://cdn.jsdelivr.net/npm/@gradio/client/+esm";
+
+const $ = id => document.getElementById(id);
+let mode = "t";
+let musicEl = null;
+
+try { $("token").value = localStorage.getItem("hf") || ""; } catch (e) {}
+
+function setMode(m) {
+  mode = m;
+  $("tabT").classList.toggle("on", m === "t");
+  $("tabI").classList.toggle("on", m === "i");
+  $("boxT").classList.toggle("hide", m !== "t");
+  $("boxI").classList.toggle("hide", m !== "i");
+}
+$("tabT").onclick = () => setMode("t");
+$("tabI").onclick = () => setMode("i");
+
+// ---- awaaz + music video ke saath chalenge ----
+const vid = $("out");
+function stopAudio() {
+  try { speechSynthesis.cancel(); } catch (e) {}
+  if (musicEl) musicEl.pause();
+}
+function speak() {
+  const t = $("narration").value.trim();
+  if (!t) return;
+  try {
+    const u = new SpeechSynthesisUtterance(t);
+    u.lang = $("lang").value;
+    speechSynthesis.cancel();
+    speechSynthesis.speak(u);
+  } catch (e) {}
+}
+vid.addEventListener("play", () => {
+  speak();
+  const f = $("music").files[0];
+  if (f) {
+    if (!musicEl) { musicEl = new Audio(); musicEl.loop = true; musicEl.volume = 0.3; }
+    if (!musicEl.dataset.n || musicEl.dataset.n !== f.name) {
+      musicEl.src = URL.createObjectURL(f); musicEl.dataset.n = f.name;
+    }
+    musicEl.currentTime = 0; musicEl.play().catch(() => {});
+  }
+});
+vid.addEventListener("pause", stopAudio);
+vid.addEventListener("ended", stopAudio);
+
+// ---- video generate ----
+$("go").onclick = async () => {
+  const st = $("status"), btn = $("go");
+  const token = $("token").value.trim();
+  try { localStorage.setItem("hf", token); } catch (e) {}
+
+  btn.disabled = true; vid.classList.add("hide"); $("dl").classList.add("hide");
+  st.textContent = "⏳ Video ban rahi hai... 1-3 minute lag sakte hain, app band mat karo.";
+
+  try {
+    const opts = token ? { hf_token: token } : {};
+    const app = await Client.connect("Lightricks/ltx-video-distilled", opts);
+    const secs = Number($("secs").value);
+    const base = { duration_ui: secs, height_ui: 512, width_ui: 704, randomize_seed: true };
+    let result;
+    if (mode === "t") {
+      const prompt = $("prompt").value.trim();
+      if (!prompt) throw new Error("Prompt likho");
+      result = await app.predict("/text_to_video",
+        { ...base, prompt, mode: "text-to-video" });
+    } else {
+      const file = $("image").files[0];
+      if (!file) throw new Error("Image chuno");
+      result = await app.predict("/image_to_video",
+        { ...base, prompt: $("prompt2").value.trim(), mode: "image-to-video",
+          input_image_filepath: handle_file(file) });
+    }
+    const v = result.data[0];
+    const url = (v && v.video && v.video.url) || (v && v.url);
+    if (!url) throw new Error("Video ka link nahi mila");
+    vid.src = url; vid.classList.remove("hide");
+    $("dl").href = url; $("dl").classList.remove("hide");
+    st.textContent = "✅ Ho gaya! Play dabao, awaaz aur music saath chalenge.";
+  } catch (e) {
+    st.textContent = "❌ Error: " + (e.message || JSON.stringify(e));
+  }
+  btn.disabled = false;
+};
+
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}
+</script>
+</body>
+</html>

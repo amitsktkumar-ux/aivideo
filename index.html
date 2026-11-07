@@ -61,6 +61,8 @@
     <option value="hi-IN">Hindi</option>
     <option value="en-US">English</option>
   </select>
+  <label>Awaaz chuno (aadmi ki awaaz wali try karo)</label>
+  <select id="voiceSel"><option value="">Auto</option></select>
   <button id="testVoice" type="button" style="background:#262c4d">🔊 Awaaz test karo</button>
   <small id="vinfo"></small>
 
@@ -77,6 +79,9 @@
   <label>Hugging Face token (optional, free quota behtar milti hai)</label>
   <input id="token" type="password" placeholder="hf_xxxxxxxx">
   <small>huggingface.co/settings/tokens se free "Read" token banao.</small>
+  <label>Awaaz Space ka naam (Brian awaaz, video me judti hai)</label>
+  <input id="vspace" placeholder="aapkanaam/voice-merge">
+  <small>Khali chhodoge to phone ki awaaz video ke saath chalegi.</small>
 </div>
 
 <script type="module">
@@ -85,8 +90,9 @@ import { Client, handle_file } from "https://cdn.jsdelivr.net/npm/@gradio/client
 const $ = id => document.getElementById(id);
 let mode = "t";
 let musicEl = null;
+let useMerged = false;
 
-try { $("token").value = localStorage.getItem("hf") || ""; } catch (e) {}
+try { $("token").value = localStorage.getItem("hf") || ""; $("vspace").value = localStorage.getItem("vs") || ""; } catch (e) {}
 
 function setMode(m) {
   mode = m;
@@ -118,7 +124,10 @@ function speakText(t, lang) {
   const u = new SpeechSynthesisUtterance(t);
   u.lang = lang;
   u.volume = 1;
-  const v = pickVoice(lang);
+  const sel = $("voiceSel").value;
+  const v = (sel && speechSynthesis.getVoices().find(x => x.voiceURI === sel)) || pickVoice(lang);
+  u.pitch = 0.75;  // thodi gehri awaaz
+  u.rate = 0.85;   // kahanikaar jaisi dheemi raftaar
   if (v) { u.voice = v; $("vinfo").textContent = ""; }
   else {
     $("vinfo").textContent = "⚠ Is phone me " + (lang === "hi-IN" ? "Hindi" : "English") +
@@ -131,12 +140,24 @@ function speak() {
   const t = $("narration").value.trim();
   if (t) speakText(t, $("lang").value);
 }
-try { speechSynthesis.getVoices(); } catch (e) {}
+function fillVoices() {
+  try {
+    const p = $("lang").value.slice(0, 2).toLowerCase();
+    const vs = speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith(p));
+    const cur = $("voiceSel").value;
+    $("voiceSel").innerHTML = '<option value="">Auto</option>' +
+      vs.map(v => '<option value="' + v.voiceURI + '">' + v.name + ' (' + v.lang + ')</option>').join("");
+    if (cur) $("voiceSel").value = cur;
+  } catch (e) {}
+}
+try { speechSynthesis.onvoiceschanged = fillVoices; } catch (e) {}
+$("lang").onchange = fillVoices;
+fillVoices();
 $("testVoice").onclick = () =>
   speakText($("narration").value.trim() || "Hello, this is a test", $("lang").value);
 
 vid.addEventListener("play", () => {
-  speak();
+  if (!useMerged) speak();
   const f = $("music").files[0];
   if (f) {
     if (!musicEl) { musicEl = new Audio(); musicEl.loop = true; musicEl.volume = 0.3; }
@@ -154,7 +175,7 @@ vid.addEventListener("ended", () => { if (musicEl) musicEl.pause(); });
 $("go").onclick = async () => {
   const st = $("status"), btn = $("go");
   const token = $("token").value.trim();
-  try { localStorage.setItem("hf", token); } catch (e) {}
+  try { localStorage.setItem("hf", token); localStorage.setItem("vs", $("vspace").value.trim()); } catch (e) {}
 
   btn.disabled = true; vid.classList.add("hide"); $("dl").classList.add("hide");
   st.textContent = "⏳ Video ban rahi hai... 1-3 minute lag sakte hain, app band mat karo.";
@@ -180,9 +201,26 @@ $("go").onclick = async () => {
     const v = result.data[0];
     const url = (v && v.video && v.video.url) || (v && v.url);
     if (!url) throw new Error("Video ka link nahi mila");
-    vid.src = url; vid.classList.remove("hide");
-    $("dl").href = url; $("dl").classList.remove("hide");
-    st.textContent = "✅ Ho gaya! Play dabao, awaaz aur music saath chalenge.";
+    let finalUrl = url;
+    useMerged = false;
+    const vs = $("vspace").value.trim();
+    const text = $("narration").value.trim();
+    if (vs && text) {
+      try {
+        st.textContent = "🎙 Awaaz jod rahi hai... (pehli baar 1 minute lag sakta hai)";
+        const vc = await Client.connect(vs, opts);
+        const r2 = await vc.predict("/merge", { video: handle_file(url), text, rate: "-5%", pitch: "+0Hz" });
+        const m = r2.data[0];
+        const mu = (m && m.video && m.video.url) || (m && m.url);
+        if (mu) { finalUrl = mu; useMerged = true; }
+      } catch (e) {
+        st.textContent = "⚠ Awaaz Space se nahi judi (" + (e.message || e) + "). Phone ki awaaz chalegi.";
+      }
+    }
+    vid.src = finalUrl; vid.classList.remove("hide");
+    $("dl").href = finalUrl; $("dl").classList.remove("hide");
+    if (useMerged) st.textContent = "✅ Ho gaya! Video me awaaz judi hui hai, download bhi kar sakte ho.";
+    else if (!st.textContent.startsWith("⚠")) st.textContent = "✅ Ho gaya! Play dabao, awaaz aur music saath chalenge.";
   } catch (e) {
     st.textContent = "❌ Error: " + (e.message || JSON.stringify(e));
   }

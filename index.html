@@ -80,7 +80,7 @@
   <input id="token" type="password" placeholder="hf_xxxxxxxx">
   <small>huggingface.co/settings/tokens se free "Read" token banao.</small>
   <label>Awaaz Space ka naam (Brian awaaz, video me judti hai)</label>
-  <input id="vspace" placeholder="aapkanaam/voice-merge">
+  <input id="vspace" value="Amittomar1995/voice-merge" placeholder="aapkanaam/voice-merge">
   <small>Khali chhodoge to phone ki awaaz video ke saath chalegi.</small>
 </div>
 
@@ -92,7 +92,7 @@ let mode = "t";
 let musicEl = null;
 let useMerged = false;
 
-try { $("token").value = localStorage.getItem("hf") || ""; $("vspace").value = localStorage.getItem("vs") || ""; } catch (e) {}
+try { $("token").value = localStorage.getItem("hf") || ""; $("vspace").value = localStorage.getItem("vs") || "Amittomar1995/voice-merge"; } catch (e) {}
 
 function setMode(m) {
   mode = m;
@@ -209,7 +209,12 @@ $("go").onclick = async () => {
       try {
         st.textContent = "🎙 Awaaz jod rahi hai... (pehli baar 1 minute lag sakta hai)";
         const vc = await Client.connect(vs, opts);
-        const r2 = await vc.predict("/merge", { video: handle_file(url), text, rate: "-5%", pitch: "+0Hz" });
+        // video ko pehle phone me download karke Space ko bhejte hain (seedha link par 403 aata tha)
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error("Video download nahi hui (" + resp.status + ")");
+        const vb = await resp.blob();
+        const vf = new File([vb], "video.mp4", { type: "video/mp4" });
+        const r2 = await vc.predict("/merge", { video: handle_file(vf), text, rate: "-5%", pitch: "+0Hz" });
         const m = r2.data[0];
         const mu = (m && m.video && m.video.url) || (m && m.url);
         if (mu) { finalUrl = mu; useMerged = true; }
